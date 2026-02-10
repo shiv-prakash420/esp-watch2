@@ -8,6 +8,8 @@
 #include "bg_image.h"
 #include "AppWeather.h"
 #include "AppTimer.h"
+#include "AppSnake.h"
+#include "AppBreakout.h"
 
 LV_FONT_DECLARE(lv_font_montserrat_14);
 LV_FONT_DECLARE(lv_font_montserrat_24);
@@ -16,6 +18,8 @@ LV_FONT_DECLARE(lv_font_montserrat_48);
 lv_obj_t *home_screen; // Variable to store your Clock screen
 bool onWeatherPage = false;
 bool onTimerPage = false;
+bool onSnakePage = false;
+bool onBreakoutPage = false;
 
 // --- Hardware Pins (Gamepad Setup) ---
 #define BUTTON_PIN 34 // Analog pin for all buttons
@@ -225,7 +229,7 @@ void setup()
     lv_timer_handler(); // Keep display responsive
   }
   Serial.println("\nWiFi Connected!");
-  beep(150); // WiFi connected confirmation beep
+  beep(250); // WiFi connected confirmation beep
 
   // Time sync
   configTime(19800, 0, "pool.ntp.org");
@@ -234,6 +238,9 @@ void setup()
   // Initialize Apps
   AppWeather_Init();
   AppTimer_Init();
+  AppSnake_Init();
+  AppBreakout_Init();
+
   AppTimer_SetAlarmCallback(timerAlarmSound); // Set timer alarm sound
 
   // Update weather
@@ -250,91 +257,217 @@ void loop()
 {
   lv_timer_handler();
 
-  // Update time every second
+  // Update time every second (not in game)
   static unsigned long last_tick = 0;
-  if (millis() - last_tick > 1000)
+  if (millis() - last_tick > 1000 && !onSnakePage && !onBreakoutPage)
   {
     update_time();
     last_tick = millis();
   }
 
-  // ========== ANALOG BUTTON READING ==========
+  // ========== BUTTON READING ==========
   static Button last_button = BTN_NONE;
   static unsigned long last_press = 0;
 
   Button current_button = readButton();
 
-  // Debounce: only register if 100ms passed and button changed
   if (current_button != last_button && millis() - last_press > 100)
   {
     last_press = millis();
 
     if (current_button != BTN_NONE)
     {
-      // Button pressed - give tactile feedback
       beep(20);
 
-      // ========== PAGE NAVIGATION ==========
-
-      // RIGHT Button -> Navigate Forward (Home -> Weather -> Timer)
-      if (current_button == BTN_RIGHT)
+      // ========== SNAKE PAGE HANDLING ==========
+      if (onSnakePage)
       {
-        if (!onWeatherPage && !onTimerPage)
+        bool playing = AppSnake_IsPlaying();
+        bool in_menu = AppSnake_IsInMenu();
+
+        if (playing)
         {
-          // Home -> Weather
+          // ===== PLAYING: Arrow keys control snake =====
+          if (current_button == BTN_UP)
+          {
+            AppSnake_SetDirection(0);
+          }
+          else if (current_button == BTN_DOWN)
+          {
+            AppSnake_SetDirection(2);
+          }
+          else if (current_button == BTN_LEFT)
+          {
+            AppSnake_SetDirection(3);
+          }
+          else if (current_button == BTN_RIGHT)
+          {
+            AppSnake_SetDirection(1);
+          }
+        }
+        else if (in_menu)
+        {
+          // ===== MENU: CENTER starts, LEFT/RIGHT navigate =====
+          if (current_button == BTN_CENTER)
+          {
+            AppSnake_Start();
+            beep(40);
+          }
+          else if (current_button == BTN_LEFT)  // ← FIXED: Go to Breakout
+          {
+            AppSnake_Stop();
+            lv_scr_load_anim(AppBreakout_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
+            onSnakePage = false;
+            onBreakoutPage = true;
+            AppBreakout_Enter();
+          }
+          else if (current_button == BTN_RIGHT)  // ← FIXED: Go to Home
+          {
+            AppSnake_Stop();
+            lv_scr_load_anim(home_screen, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            onSnakePage = false;
+          }
+        }
+        else
+        {
+          // ===== GAME OVER: CENTER restarts, LEFT/RIGHT navigate =====
+          if (current_button == BTN_CENTER)
+          {
+            AppSnake_SetDirection(DIR_RIGHT); // Trigger restart
+            beep(40);
+          }
+          else if (current_button == BTN_LEFT)  // ← FIXED: Go to Breakout
+          {
+            AppSnake_Stop();
+            lv_scr_load_anim(AppBreakout_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
+            onSnakePage = false;
+            onBreakoutPage = true;
+            AppBreakout_Enter();
+          }
+          else if (current_button == BTN_RIGHT)  // ← FIXED: Go to Home
+          {
+            AppSnake_Stop();
+            lv_scr_load_anim(home_screen, LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            onSnakePage = false;
+          }
+        }
+      }
+      
+      // ========== BREAKOUT PAGE HANDLING ==========
+      else if (onBreakoutPage)
+      {
+        bool playing = AppBreakout_IsPlaying();
+        bool in_menu = AppBreakout_IsInMenu();
+
+        if (playing)
+        {
+          // ===== PLAYING: LEFT/RIGHT control paddle =====
+          if (current_button == BTN_LEFT)
+          {
+            AppBreakout_MovePaddle(-1);
+          }
+          else if (current_button == BTN_RIGHT)
+          {
+            AppBreakout_MovePaddle(1);
+          }
+        }
+        else if (in_menu)
+        {
+          // ===== MENU: CENTER starts, LEFT/RIGHT navigate =====
+          if (current_button == BTN_CENTER)
+          {
+            AppBreakout_Start();
+            beep(40);
+          }
+          else if (current_button == BTN_RIGHT)  // Go to Snake
+          {
+            AppBreakout_Stop();
+            lv_scr_load_anim(AppSnake_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            onBreakoutPage = false;
+            onSnakePage = true;
+            AppSnake_Enter();
+          }
+          else if (current_button == BTN_LEFT)  // ← Can't go further left
+          {
+            beep(10);  // Just beep, at the edge
+          }
+        }
+        else
+        {
+          // ===== GAME OVER: CENTER restarts, LEFT/RIGHT navigate =====
+          if (current_button == BTN_CENTER)
+          {
+            AppBreakout_MovePaddle(0); // Trigger restart
+            beep(40);
+          }
+          else if (current_button == BTN_RIGHT)  // Go to Snake
+          {
+            AppBreakout_Stop();
+            lv_scr_load_anim(AppSnake_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
+            onBreakoutPage = false;
+            onSnakePage = true;
+            AppSnake_Enter();
+          }
+          else if (current_button == BTN_LEFT)  // ← Can't go further left
+          {
+            beep(10);  // Just beep, at the edge
+          }
+        }
+      }
+      
+      // ========== NORMAL PAGE NAVIGATION ==========
+      else
+      {
+        // LEFT from Home -> Snake
+        if (current_button == BTN_LEFT && !onWeatherPage && !onTimerPage)
+        {
+          lv_scr_load_anim(AppSnake_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
+          onSnakePage = true;
+          AppSnake_Enter();
+        }
+        // RIGHT from Home -> Weather
+        else if (current_button == BTN_RIGHT && !onWeatherPage && !onTimerPage)
+        {
           lv_scr_load_anim(AppWeather_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
           onWeatherPage = true;
-          onTimerPage = false;
         }
-        else if (onWeatherPage && !onTimerPage)
+        // RIGHT from Weather -> Timer
+        else if (current_button == BTN_RIGHT && onWeatherPage && !onTimerPage)
         {
-          // Weather -> Timer
           lv_scr_load_anim(AppTimer_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_LEFT, 300, 0, false);
           onWeatherPage = false;
           onTimerPage = true;
         }
-      }
-
-      // LEFT Button -> Navigate Backward (Timer -> Weather -> Home)
-      if (current_button == BTN_LEFT)
-      {
-        if (onTimerPage)
+        // LEFT from Timer -> Weather
+        else if (current_button == BTN_LEFT && onTimerPage)
         {
-          // Timer -> Weather
           lv_scr_load_anim(AppWeather_GetScreen(), LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
           onTimerPage = false;
           onWeatherPage = true;
         }
-        else if (onWeatherPage)
+        // LEFT from Weather -> Home
+        else if (current_button == BTN_LEFT && onWeatherPage)
         {
-          // Weather -> Home
           lv_scr_load_anim(home_screen, LV_SCR_LOAD_ANIM_MOVE_RIGHT, 300, 0, false);
           onWeatherPage = false;
-          onTimerPage = false;
-        }
-      }
-
-      // ========== TIMER PAGE CONTROLS ==========
-      if (onTimerPage)
-      {
-
-        // CENTER Button -> Start/Stop/Reset Timer
-        if (current_button == BTN_CENTER)
-        {
-          AppTimer_Toggle();
-          beep(40); // Slightly longer beep for important action
         }
 
-        // UP Button -> Increase Timer
-        if (current_button == BTN_UP)
+        // ========== TIMER CONTROLS ==========
+        if (onTimerPage)
         {
-          AppTimer_Adjust(1);
-        }
-
-        // DOWN Button -> Decrease Timer
-        if (current_button == BTN_DOWN)
-        {
-          AppTimer_Adjust(-1);
+          if (current_button == BTN_CENTER)
+          {
+            AppTimer_Toggle();
+            beep(40);
+          }
+          else if (current_button == BTN_UP)
+          {
+            AppTimer_Adjust(1);
+          }
+          else if (current_button == BTN_DOWN)
+          {
+            AppTimer_Adjust(-1);
+          }
         }
       }
     }
@@ -342,21 +475,43 @@ void loop()
     last_button = current_button;
   }
 
-  // ========== BACKGROUND UPDATES ==========
-
-  // Update weather every 30 minutes
-  static unsigned long lastWeatherUpdate = 0;
-  if (millis() - lastWeatherUpdate > 1800000 || lastWeatherUpdate == 0)
+  // ========== UPDATES ==========
+  if (onSnakePage)
   {
-    if (WiFi.status() == WL_CONNECTED)
-    {
-      AppWeather_Update();
-      lastWeatherUpdate = millis();
-    }
+    AppSnake_Update();
   }
+  else if (onBreakoutPage)
+  {
+    AppBreakout_Update();
+  }
+  else
+  {
+    // Weather update
+    static unsigned long lastWeatherUpdate = 0;
+    if (millis() - lastWeatherUpdate > 1800000 || lastWeatherUpdate == 0)
+    {
+      if (WiFi.status() == WL_CONNECTED)
+      {
+        AppWeather_Update();
+        lastWeatherUpdate = millis();
+      }
+    }
 
-  // Keep timer running in background
-  AppTimer_Update();
+    AppTimer_Update();
+  }
 
   delay(10);
 }
+// ```
+
+// **Key fixes:**
+// 1. ✅ **Removed duplicate** `else if (current_button == BTN_RIGHT)` in Snake menu
+// 2. ✅ **Fixed Snake menu navigation**: LEFT → Breakout, RIGHT → Home
+// 3. ✅ **Fixed Snake game over navigation**: LEFT → Breakout, RIGHT → Home
+// 4. ✅ **Fixed Breakout navigation**: RIGHT → Snake, LEFT → edge (beep)
+// 5. ✅ **Updated time check** to exclude both games
+
+// **Navigation flow:**
+// ```
+// Breakout ← Snake ← Home → Weather → Timer
+// (edge)
